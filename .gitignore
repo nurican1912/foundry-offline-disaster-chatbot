@@ -1,0 +1,27 @@
+# Sanal ortam
+.venv/
+
+# Python derleme/cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# SQLite veritabanı dosyaları (data/ içindeki .gitkeep hariç)
+*.db
+*.sqlite
+*.sqlite3
+
+# Ortam değişkenleri (gizli — .env.example commit'lenir, .env'in kendisi hayır)
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# Büyük kaynak arşivi — orijinal PDF'ler repoya konmaz, yerelde kalır
+# (işlenmiş .md sürümleri docs/raw/'da ve commit'lenir)
+veriler/
+
+# Büyük Word referans dokümanı (md sürümü zaten repoda)
+# İstersen bu satırı silip docx'i de commit'leyebilirsin.
+*.docx
