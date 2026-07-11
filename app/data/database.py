@@ -92,3 +92,45 @@ def save_embedding(db_path: str, chunk_id: int, vector: list[float]) -> None:
 
     conn.commit()
     conn.close()
+
+
+def get_embedded_chunks(db_path: str) -> list[dict]:
+    """Embedding'i DOLU olan tüm chunk'ları döndürür (retrieval için).
+
+    embedding, DB'de JSON metin olarak duruyor; burada json.loads ile
+    tekrar sayı listesine çevrilir.
+    """
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT id, content, source, role, embedding "
+                   "FROM chunks WHERE embedding IS NOT NULL")
+
+    rows = cursor.fetchall()
+   
+    result: list[dict] = []
+
+    for row in rows:
+        # row[4] string tipinde saklanan köşeli parantezli vektör metnidir (ör: "[0.1, 0.5, -0.2]").
+        # json.loads() bu metni okuyarak gerçek bir Python listesine çevirir.
+        embedding_list = json.loads(row[4])
+        
+        # Her bir satır verisiyle istenen anahtarlara sahip bir sözlük (dictionary) oluşturuyoruz.
+        chunk_dict = {
+            "id": row[0],
+            "content": row[1],
+            "source": row[2],
+            "role": row[3],
+            "embedding": embedding_list
+        }
+        
+        # Oluşturulan sözlüğü result isimli boş listemize ekliyoruz.
+        result.append(chunk_dict)
+
+
+    conn.close()
+    return result
+
+    # TODO (2): Her satır için embedding metnini json.loads ile listeye çevir ve
+    #   {"id","content","source","role","embedding"} sözlüğü yapıp result'a ekle.
+    #   (row[0]=id, row[1]=content, row[2]=source, row[3]=role, row[4]=embedding metni)

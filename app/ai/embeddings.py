@@ -21,7 +21,10 @@ def _get_client():
 
     # 1. FoundryLocalManager singleton'ını hazırla.
     if FoundryLocalManager.instance is None:
-        FoundryLocalManager.initialize(Configuration(app_name=settings.app_name))
+        FoundryLocalManager.initialize(Configuration(
+            app_name=settings.app_name,
+            model_cache_dir=settings.model_cache_dir or None,
+        ))
     
     manager = FoundryLocalManager.instance
 
@@ -46,6 +49,19 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
 
 
 def embed_text(text: str) -> list[float]:
-    """Tek bir metni tek bir vektöre çevirir."""
+    """Tek bir metni tek bir vektöre çevirir. (Dokümanlar/chunk'lar için.)"""
     # Tek elemanlı bir liste olarak toplu fonksiyona yollayıp, dönen listenin ilk (ve tek) elemanını alıyoruz
     return embed_texts([text])[0]
+
+
+# qwen3-embedding, SORGU tarafında bir yönerge (instruction) bekler. Bu, sorgu
+# vektörünü dokümanlara daha iyi hizalar ve ilgili eşleşmelerin skorunu yükseltir.
+# Dokümanlar yönergesiz (embed_text) embed edilir; SADECE sorgular embed_query kullanır.
+QUERY_INSTRUCTION = (
+    "Instruct: Verilen soru için en ilgili ilk yardım ve afet talimatını getir.\nQuery: "
+)
+
+
+def embed_query(text: str) -> list[float]:
+    """Kullanıcı sorusunu (yönerge önekiyle) vektöre çevirir. Retrieval bunu kullanır."""
+    return embed_text(QUERY_INSTRUCTION + text)

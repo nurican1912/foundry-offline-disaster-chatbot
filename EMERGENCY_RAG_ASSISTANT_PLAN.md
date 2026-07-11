@@ -157,6 +157,10 @@ Foundry Local + Python temeli her şeyin önkoşulu → veri olmadan retrieval o
   - Bilinen ufak borç: 20 prose chunk 1000+ karakter (uzun-bölüm ikincil bölme, gerekirse ileride); PDF→md kaynaklı ufak artıklar (`- Ø` madde işaretleri vb.).
 - ✅ **Modül C (C1+C2+C3 okuma/yazma) — SQLite Veri Katmanı:** `app/data/database.py`. `chunks` tablosu (id, source, content, type, role, category, content_hash UNIQUE, embedding TEXT/JSON). `init_db` (şema), `save_chunks` (hash'li idempotent upsert — `ON CONFLICT DO NOTHING`), `get_chunks_without_embedding` + `save_embedding` (okuma/güncelleme). Tüm SQL parametreli (`?`). 420 chunk kalıcı.
 - ✅ **Modül B3 — Embedding Üretimi:** `app/ai/embeddings.py` (embed_text/embed_texts, model bir kez yüklenir) + `app/rag/ingest.py` (`embed_pending_chunks`: oku→embed→yaz köprüsü). **420 chunk'ın hepsi 1024-boyutlu vektöre çevrilip DB'ye yazıldı.** Bilgi tabanı aranabilir durumda.
+- ✅ **Modül D — Retrieval Motoru:** `app/rag/retrieval.py`. `cosine_similarity` (D1), `retrieve` (D2: soruyu embed et → 420 chunk ile karşılaştır → top_k skorlu döndür), `get_embedded_chunks` (DB'den vektörlü chunk'lar), `get_relevant_chunks` (D3: en iyi skor eşik altıysa boş dön → LLM atlanır). **Sıfır halüsinasyon kapısı kod seviyesinde çalışıyor.**
+  - **Eşik kalibre edildi:** gerçek veride ilgili sorular 0.63–0.72, alakasız 0.35–0.44 → aralarında net boşluk. `similarity_threshold = 0.5` doğrulandı (config varsayılanı yeterli). Skorların dar banda sıkışması embedding anizotropisinden, veri eksikliğinden değil.
+- ✅ **Modül E — LLM Entegrasyonu ve Prompt Mühendisliği:** `app/ai/chat.py` (E1: chat client, embeddings.py deseni), `app/rag/prompts.py` (E2: victim/rescuer system prompt + NO_CONTEXT_MESSAGE), `app/rag/pipeline.py` (E3: `answer(query, role)` — get_relevant_chunks → boşsa reddet → context+prompt kur → chat). **Uçtan uca test geçti:** ilgili soru grounded cevap (halüsinasyon yok), alakasız/kapsam-dışı → "Bu konuda doğrulanmış bir bilgiye sahip değilim". RAG çekirdeği çalışıyor.
+  - **Bilinen recall açığı:** "bacağım çok ağrıyor" gibi belirsiz belirti soruları eşiği geçemeyip reddedilebiliyor. Çözüm kolları (ileride): eşiği 0.45'e düşür / korpusu büyüt (queries logu, Madde 2) / retrieval'ı güçlendir (Instruct-Query format + hibrit kelime araması, Madde 3). Kuralı esnetmeden.
 
 ### Alınan önemli kararlar / kısıtlar
 
@@ -171,4 +175,4 @@ Foundry Local + Python temeli her şeyin önkoşulu → veri olmadan retrieval o
 
 ### Sıradaki adım
 
-**Modül D — Retrieval Motoru.** Bilgi tabanı hazır (420 vektörlü chunk). Şimdi: (D1) kosinüs benzerliği fonksiyonu, (D2) top-k retrieval, (D3) güvenlik eşiği (skor eşik altıysa boş dön → LLM atlanır). Kalibrasyon notu: `similarity_threshold` gerçek skorlara göre ayarlanacak; qwen3-embedding query-instruction formatı test edilecek.
+**Modül F — Backend API (FastAPI).** RAG pipeline (`answer(query, role)`) hazır; şimdi onu bir HTTP endpoint'iyle dışarı açacağız. (F1) FastAPI temelleri + Pydantic request/response modelleri, (F2) `/chat` endpoint (role + mesaj alır, `answer`'ı çağırır, cevap döner), (F2.5) `queries` tablosu + loglama (cevaplanan/cevaplanamayan + top_score), (F4) CORS + hata yönetimi. Frontend (G) bundan sonra bağlanır.
