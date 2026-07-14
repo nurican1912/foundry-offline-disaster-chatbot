@@ -9,15 +9,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_name: str = "emergency_rag"
-    chat_model_alias: str = "qwen3-4b"
-    embedding_model_alias: str = "qwen3-embedding-0.6b"
+    chat_model_alias: str = "qwen2.5:3b"          # Ollama; bge-m3'le birlikte 4 GB'a sığar → hızlı. Kalite kritik değil (Q&A'yi Karar 5 yapıyor).
+    embedding_model_alias: str = "bge-m3"          # Ollama modeli
     top_k: int = 3
-    similarity_threshold: float = 0.5
+    similarity_threshold: float = 0.46             # bge-m3 ile kalibre (recall öncelikli; telefon gibi sızıntı hibritle çözülecek)
     db_path: str = "data/emergency.db"
     docs_dir: str = "docs/raw"
-    # Model cache dizini. Boşsa Foundry'nin varsayılanı kullanılır.
-    # Makineye özel yol (ör. D: sürücüsü) .env'den MODEL_CACHE_DIR ile verilir.
-    model_cache_dir: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

@@ -3,6 +3,14 @@
 (Modeller ilk soruda yüklenir, sonraki sorular hızlıdır.)
 """
 
+import sys
+
+# Windows konsolu (cp1254) bazı karakterleri basamayıp çökebiliyor; utf-8'e çevir.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 from app.rag.pipeline import answer
 
 print("Acil Durum Asistanı — deneme")

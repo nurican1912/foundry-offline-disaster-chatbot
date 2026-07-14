@@ -108,4 +108,107 @@ YENİDEN embed edilmeli + eşik yeniden kalibre edilmeli (veri işi).
 **Kritik karar:** Bu, projeyi "Microsoft Foundry Local" çerçevesinden çıkarır. Foundry
 zorunlu değilse mühendislik olarak sağlam; zorunluysa proje kimliğini değiştirir.
 
-**Durum: KARARLAŞTIRILIYOR (kullanıcı onayı bekleniyor).**
+**Durum: KARAR VERİLDİ — Ollama'ya geçildi.** bge-m3 (embedding) + qwen2.5:3b (chat),
+ikisi de %100 GPU (RTX 3050 Ti). Chat 2-6 sn (CPU'daki 20-58 sn'den kurtulduk). AI
+katmanı (`embeddings.py`, `chat.py`) Ollama'ya bağlandı; retrieval/pipeline/db aynı kaldı.
+Korpus bge-m3 ile yeniden embed edildi, eşik 0.46'ya kalibre edildi.
+
+---
+
+## Zorluk 4 — LLM afet bağlamını "bilmiyor", uygunsuz/klişe cevap veriyor (MODELDEN BAĞIMSIZ)
+
+**Sorun:**
+Model, kullanıcının ŞU AN afet içinde / enkaz altında olduğunu dikkate almadan, sanki
+kişi evde rahatça oturuyormuş gibi cevap veriyor:
+- "Doktorunuza danışın", "hastaneye gidin", "ayağa kalkın", "hareket etmeye çalışın".
+
+Enkaz altındaki, hareketi kısıtlı, hastaneye ulaşamayan biri için bu tavsiyeler
+**tehlikeli ve anlamsız.** Ayrıca doğru chunk gelse bile ("Kemiğimin kırıldığını
+düşünüyorum" → kırık talimatı) model **bağlamda olmayan** genel klişeyi ekliyor
+(grounding sapması). qwen2.5:3b'de cevap tümüyle de bozuk çıkıyor ("Afiyet olsun!",
+"inşaat etmen gereken").
+
+İkinci boyut: Q&A'de doğrulanmış cevap zaten mükemmel; LLM'e yeniden yazdırmak onu
+bozuyor. Ama kullanıcı soruyu farklı ifade ettiği için ("yatak üstüme düştü, sesimi
+nasıl duyururum") tam verbatim de yetmiyor — cevabın o duruma uyarlanması gerekiyor.
+
+**Teşhis:**
+1. System prompt durumu yeterince dayatmıyor → model boşluğu "güvenli klişe"yle dolduruyor.
+2. Grounding zayıf → bağlam dışı genel bilgi ekliyor.
+3. Zayıf model (3b) kuralları hiç tutmuyor + bozuk Türkçe üretiyor.
+
+**Çözüm (kararlaştırıldı, uygulanacak):**
+- **Karar 6 — Durum-kilitli prompt:** kullanıcının afet içinde/mahsur/ulaşımsız olduğunu
+  dayat; klişe tavsiyeleri yasakla.
+- **Karar 5 — Q&A doğrudan/uyarlama + sıkı grounding:** doğrulanmış cevabı uyarla, bozma.
+- **Güçlü model:** qwen2.5:7b (3b kuralları tutmuyor).
+
+**Durum: KISMEN ÇÖZÜLDÜ (Zorluk 5'e bağlandı).** Model kalitesi 4 GB VRAM'e takıldı; asıl
+çözüm mimari oldu (Karar 5). Durum-kilitli prompt (Karar 6) hâlâ yapılacak.
+
+---
+
+## Zorluk 5 — 4 GB VRAM duvarı: hızlı+iyi model YOK → çözüm mimari (Karar 5)
+
+**Sorun:**
+GPU'ya geçtik (hız için) ama iyi kalite + hız aynı anda olmadı. Denenen modeller:
+| Model | Kalite | Hız | Neden |
+|---|---|---|---|
+| qwen2.5:3b | ❌ bozuk Türkçe ("Afiyet olsun") | ✅ 2-6 sn | küçük |
+| qwen2.5:7b | ✅ iyi | ❌ 28-38 sn | 4 GB'a sığmaz → CPU offload |
+| qwen3:4b | ✅ iyi | ❌❌ 220 sn | düşünme kapatılamıyor (`/no_think`, `think=False` çalışmadı) + offload |
+
+**Teşhis — asıl kısıt VRAM, RAM değil:**
+- **VRAM = 4 GB** (GPU, RTX 3050 Ti). Hızlı çalışma buraya sığmayı gerektirir → ~3B tavan.
+- **RAM = 16 GB** (CPU). Büyük model buraya sığar ama CPU'da **yavaş**. RAM bolluğu hızı çözmez.
+- Kritik: **chat modeli + embedding modeli VRAM'i PAYLAŞIR.** qwen3:4b (3.5 GB yüklü) +
+  bge-m3 (1.2 GB) > 4 GB → sığmayan kısım CPU'ya taşar → yavaş.
+- "En iyi model" tabloları (RAM'e göre öneren) bizi kurtarmaz — onlar sığmayı ölçer, hızı değil.
+
+**Sonuç:** 4 GB VRAM'de hem hızlı hem iyi model **fiziksel olarak yok.** Model avı kapandı.
+
+**Çözüm — Karar 5 (Q&A doğrudan cevap):**
+Kaliteyi modelden değil **mimariden** al. Q&A eşleşmesinde (yaygın durum) doğrulanmış uzman
+cevabını **LLM'siz** doğrudan döndür → anında + kusursuz + VRAM derdi yok. LLM (hızlı küçük
+model qwen2.5:3b) sadece nadir prose/çeviride devreye girer.
+- Kod: `get_embedded_chunks`'a `type` eklendi (retrieval type'ı taşısın) + `pipeline.answer`'da
+  `if top["type"]=="qa": return doğrulanmış_cevap`.
+- Test: "bacağım kırıldı", "yatak üstüme düştü sesimi duyururum" → anında + birebir doğru.
+
+**Bilinen sınır (Karar 5'in katılığı):** Retrieval yanlış eşleşirse verbatim cevap emin şekilde
+yanlış olur. Örn. "bacağımı hissetmiyorum" → kanama Q&A'sine düştü (korpusta "his kaybı" yok).
+Yakın-vadede korpus ekleyerek (Karar 3) azaltılır; asıl çözüm Karar 7 (triyaj, MVP dışı).
+
+**Durum: ÇÖZÜLDÜ (mimari).** Residual model adayı phi-4-mini (qwen2.5:3b yetmezse).
+
+---
+
+## Zorluk 6 — Agent alaka kapısı (Karar 4) zayıf modelle güvenli değil → MVP'den çıkarıldı
+
+**Sorun:**
+Retrieval eşiği bazı alakasızları sızdırıyordu ("telefon nasıl tamir edilir" → 0.599,
+eşik üstü). Çözüm olarak Karar 4: her soru için offline LLM'e "afet/ilk yardım ile ilgili
+mi? EVET/HAYIR" sorup ilgisizi reddetmek.
+
+**Teşhis (test):**
+qwen2.5:3b sınıflandırıcı olarak **güvenilmez** — Türkçe günlük belirtileri yanlış sınıfladı:
+- "kanama var durduramıyorum" → NO ❌
+- "nefes alamıyorum" → NO ❌
+- "başım dönüyor" → NO ❌ (prompt EVET'e meyillendirilse bile)
+- "bacağım kırıldı" → YES ✓, "telefon tamiri"/"kek" → NO ✓
+
+Prompt'u güçlü şekilde EVET'e meyillendirince kanama/nefes düzeldi ama "başım dönüyor" yine
+kaçtı → **whack-a-mole**, model çok zayıf.
+
+**Güvenlik matematiği (kritik):**
+- Yanlış-pozitif (telefon sızar) = rahatsız edici ama **tehlikesiz** (alakasız içerik).
+- Yanlış-negatif (gerçek acili reddet) = **TEHLİKELİ**.
+Sert reddetme kapısı, zayıf modelle net güvenlik zararı: küçük bir sızıntıyı, gerçek acili
+reddetme riskiyle değiştiriyor. "Başım dönüyor"u reddeden sistem sahaya çıkamaz.
+
+**Karar:** Karar 4 **MVP'den çıkarıldı.** `pipeline.answer()`'daki kapı kaldırıldı;
+`app/rag/agent.py` (kod + prompt + mantık) **saklandı**, ileride iyi bir sınıflandırıcı
+(daha iyi model / farklı yaklaşım, ör. logla-işaretle ama reddetme) gelince geri bağlanır.
+Telefon tipi nadir sızıntılar şimdilik kabul edildi (eşik çoğunu zaten eliyor).
+
+**Durum: ERTELENDİ (MVP dışı).** Kök sebep yine 4 GB zayıf-model duvarı (bkz Zorluk 5).

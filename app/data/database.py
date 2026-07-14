@@ -103,7 +103,7 @@ def get_embedded_chunks(db_path: str) -> list[dict]:
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    cursor.execute("SELECT id, content, source, role, embedding "
+    cursor.execute("SELECT id, content, source, role, type, embedding "
                    "FROM chunks WHERE embedding IS NOT NULL")
 
     rows = cursor.fetchall()
@@ -113,7 +113,7 @@ def get_embedded_chunks(db_path: str) -> list[dict]:
     for row in rows:
         # row[4] string tipinde saklanan köşeli parantezli vektör metnidir (ör: "[0.1, 0.5, -0.2]").
         # json.loads() bu metni okuyarak gerçek bir Python listesine çevirir.
-        embedding_list = json.loads(row[4])
+        embedding_list = json.loads(row[5])
         
         # Her bir satır verisiyle istenen anahtarlara sahip bir sözlük (dictionary) oluşturuyoruz.
         chunk_dict = {
@@ -121,6 +121,7 @@ def get_embedded_chunks(db_path: str) -> list[dict]:
             "content": row[1],
             "source": row[2],
             "role": row[3],
+            "type": row[4],
             "embedding": embedding_list
         }
         

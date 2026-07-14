@@ -176,3 +176,23 @@ Foundry Local + Python temeli her şeyin önkoşulu → veri olmadan retrieval o
 ### Sıradaki adım
 
 **Modül F — Backend API (FastAPI).** RAG pipeline (`answer(query, role)`) hazır; şimdi onu bir HTTP endpoint'iyle dışarı açacağız. (F1) FastAPI temelleri + Pydantic request/response modelleri, (F2) `/chat` endpoint (role + mesaj alır, `answer`'ı çağırır, cevap döner), (F2.5) `queries` tablosu + loglama (cevaplanan/cevaplanamayan + top_score), (F4) CORS + hata yönetimi. Frontend (G) bundan sonra bağlanır.
+
+---
+
+## 8. Mimari Kararlar — İleri Faz (2026-07-11)
+
+Foundry Local → **Ollama (GPU)** geçişi sonrası alınan yön kararları. Önkoşul: model önce.
+
+- **Faz 0 — Model (önkoşul):** qwen2.5:3b Türkçesi yetersiz (bozuk, "Afiyet olsun" gibi). Daha güçlü çok-dilli modele geç: **qwen2.5:7b** (VRAM 4 GB'a sıkışık → kısmen CPU offload, biraz yavaş). Aşağıdaki kararların çoğu buna bağlı.
+- **Karar 1 — İngilizce birinci sınıf:** İngilizce sorulara Türkçe kadar iyi İngilizce cevap (diğer diller LLM'in gücüne kalır). bge-m3 cross-lingual + prompt'a "kullanıcının dilinde cevapla" + İngilizce kaynak (Karar 3).
+- **Karar 2 — Kaynakça gösterme (zorunlu):** Getirilen chunk'ların `source`'undan **deterministik** "Kaynaklar:" bloğu (kod ile, halüsinasyonsuz); opsiyonel inline atıf.
+- **Karar 3 — Korpus genişletme (TR+EN):** Çok sayıda otoriter yeni kaynak. İçerik otoriter kaynaklardan (kullanıcı getirir/onaylar); Claude yapılandırma/chunk/ingest/gap-analizi yapar. Re-embed + re-kalibrasyon.
+- **Karar 4 — Agent alaka kapısı [MVP DIŞI / ERTELENDİ]:** Fikir: offline LLM sınıflandırıcı her soruya "afet/ilk yardım ile ilgili mi? EVET/HAYIR" der; HAYIR → reddet (telefon-tamiri sızıntısını çözer). **Denendi ve çıkarıldı:** qwen2.5:3b güvenilir sınıflandırıcı değil — "başım dönüyor", "kanama var" gibi gerçek acilleri reddediyordu (tehlikeli yanlış-negatif). Kod `app/rag/agent.py`'de saklı; iyi sınıflandırıcı gelince geri bağlanır. Bkz Zorluk 6.
+- **Karar 5 — Pipeline rafinasyonu (Q&A doğrudan / sıkı-grounded LLM):** Q&A eşleşmesinde doğrulanmış cevabın içeriği KORUNUR; LLM onu yeniden yazmaz — sadece kullanıcının durumuna **uyarlar** ve gerekirse **çevirir**, talimatları değiştirmeden/çıkarmadan/eklemeden. Prose'da tightly-grounded sentez. (Sebep: LLM'e mükemmel Q&A cevabını yazdırmak onu bozuyor; ama kullanıcı soruyu farklı ifade ettiği için tam verbatim de yetmez → uyarlama gerek.)
+- **Karar 6 — Durum-kilitli prompt:** Victim promptu, kullanıcının ŞU AN afet içinde/mahsur/hastane-doktora ulaşımsız olduğunu **dayatır**; "doktora danış / hastaneye git / ayağa kalk / hareket et" gibi klişeleri **YASAKLAR** (bağlam açıkça söylemedikçe).
+- **Karar 8 — Dil-farkında retrieval (iki dilli destek için):** İki dilli korpusta (TR+EN) bge-m3 cross-lingual olduğu için İngilizce soru Türkçe chunk'a da eşleşebilir → Karar 5 yanlış dilde cevap döndürür. Çözüm: her chunk'a `language` (`tr`/`en`) etiketi + sorunun dilini algıla + `retrieve`'de aynı dildeki chunk'ları filtrele (rol filtresi gibi). Böylece İngilizce soru → İngilizce chunk → İngilizce cevap; TR → TR. Karar 1/3 ile birlikte ele alınır. (İngilizce Q&A kaynakları kullanıcı hazırlayacak.)
+- **Karar 7 — Triyaj / konuşma modu (MVP DIŞI, sonra eklenecek):** LLM sadece cevaplayan değil, **geri soru soran** bir triyaj asistanı olur. Örn. "bacağımı hissetmiyorum" → "hareket ettirme, şunu yap, ve kontrol et: kanama var mı? ağrı var mı?". Belirsiz belirti sorularında ve retrieval yanlış eşleşmelerinde (Q&A verbatim'in katı kaldığı yerde) çok daha sağlam. **Maliyet:** çok-turlu konuşma (hafıza/state + arayüz → Modül F/G işi) + LLM'i her zaman devreye sokar (yavaşlar) + iyi model ister (4 GB'da zor). Bu yüzden MVP sonrası. Yakın-vadede yanlış eşleşmeler korpus ekleyerek (Karar 3) azaltılır.
+
+**Sıralama (MVP):** Karar 5 (✅) → Karar 6 (✅ durum-kilitli prompt) → Karar 2 (kaynakça) → Karar 1 + Karar 8 (İngilizce + dil-farkında retrieval) → Karar 3 (korpus, süregelen) → Modül F (FastAPI). **MVP dışı:** Karar 4 (agent — zayıf model güvensiz, ertelendi), Karar 7 (triyaj), Karar 8 tam iki dilli destek (F/G'den sonra).
+
+> Not: Faz 0'daki qwen2.5:7b denendi ve **çok yavaştı** (28-38 sn, VRAM offload); qwen3:4b düşünme kapatılamadığı için **220 sn**. 4 GB VRAM'de hem hızlı hem iyi model yok (bkz [[karsilastigimiz-zorluklar]] Zorluk 5). Karar: hızlı küçük model (**qwen2.5:3b**) + **Karar 5** ile kaliteyi mimariden al. Residual model adayı: phi-4-mini.
