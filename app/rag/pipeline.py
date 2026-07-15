@@ -1,54 +1,63 @@
-"""RAG Pipeline (Modül E3) — soru + rol -> cevap.
+"""RAG Pipeline (Modül E3) — soru + rol -> yapılandırılmış sonuç paketi.
 
-Sıfır halüsinasyon garantisi burada kod seviyesinde: retrieval boş dönerse
-LLM'e HİÇ gidilmez; doğrulanmış bilgi yok mesajı döner.
+Sıfır halüsinasyon garantisi burada kod seviyesinde: en iyi eşleşme eşiğin
+altındaysa LLM'e HİÇ gidilmez; "bilmiyorum" paketi döner.
+
+answer() artık düz metin değil, ETİKETLİ bir paket döndürür:
+    {"answer": str, "sources": list[str], "outcome": str, "top_score": float}
+outcome: 'rejected' (bilmiyorum) | 'qa' (doğrulanmış) | 'prose' (LLM).
+Loglama ve JSON'a çevirme PIPELINE'DA DEĞİL, kenarda (API) yapılır — çekirdek saf kalır.
 """
 
 from app.ai.chat import chat
+from app.config import settings
 from app.rag.prompts import SYSTEM_PROMPTS, NO_CONTEXT_MESSAGE
-from app.rag.retrieval import get_relevant_chunks
+from app.rag.retrieval import retrieve
 # NOT: Karar 4 (agent alaka kapısı) MVP'den çıkarıldı — zayıf model gerçek acilleri
 # ("başım dönüyor" vb.) reddediyordu (tehlikeli). Kod app/rag/agent.py'de duruyor,
 # iyi bir sınıflandırıcı gelince geri bağlanacak. Bkz KARSILASTIGIMIZ_ZORLUKLAR Zorluk 6.
 
 
-def format_sources(chunks: list[dict]) -> str:
-    """Kullanılan chunk'ların kaynaklarını tekilleştirip 'Kaynaklar:' bloğu üretir.
+def unique_sources(chunks: list[dict]) -> list[str]:
+    """Chunk'ların kaynaklarını tekilleştirip LİSTE olarak döndürür.
 
-    Deterministik (koddan) — model kaynak uydurmaz. Cevabın SONUNA eklenir.
+    (Eski format_sources string döndürüyordu; artık kaynaklar pakette ayrı bir
+    liste alanı olduğu için düz liste veriyoruz — metne yapıştırmayı tüketiciye bırakıyoruz.)
     """
     sources = []
     for c in chunks:
         if c["source"] not in sources:
             sources.append(c["source"])
-    return "\n\nKaynaklar: " + ", ".join(sources)
+    return sources
 
 
+def answer(query: str, role: str) -> dict:
+    """Soruya grounded cevap üretir ve yapılandırılmış paket döndürür (saf: DB'ye yazmaz)."""
 
-def answer(query: str, role: str) -> str:
-    """Kullanıcının sorusuna, rolüne uygun ve yalnızca korpustan grounded cevap üretir."""
+    # 1) Skorlu chunk'ları getir. DİKKAT: get_relevant_chunks DEĞİL, retrieve.
+    #    retrieve KAPISIZ ve her chunk'a "score" ekliyor → reddetsek bile skoru kaybetmeyiz.
+    results = retrieve(query)
+    top_score = results[0]["score"] if results else 0.0
 
-    # 1) İlgili chunk'ları getir (güvenlik eşiği dahil)
-    chunks = get_relevant_chunks(query)
+    # 2) Güvenlik kapısı (eşiği artık BURADA uyguluyoruz, skor elimizde kalsın diye).
+    
+    if not results or top_score < settings.similarity_threshold:
+        return {"answer": NO_CONTEXT_MESSAGE, "sources": [], "outcome": "rejected", "top_score": top_score}
+    
 
-    # 2) Güvenlik kapısı: context boşsa LLM'e HİÇ gitme, reddet
-    if not chunks:
-        return NO_CONTEXT_MESSAGE
-        # Karar 5: en iyi eşleşme Q&A ise, doğrulanmış cevabı LLM'siz döndür (hızlı + kusursuz)
-    top = chunks[0]
+    top = results[0]
+
+    # 3) Karar 5: en iyi eşleşme Q&A ise doğrulanmış cevabı LLM'siz döndür.
     if top["type"] == "qa":
-        # ilk satır=soru, gerisi=cevap
-        return top["content"].split("\n", 1)[1].strip() + format_sources([top])
+        cevap = top["content"].split("\n", 1)[1].strip()   # ilk satır=soru, gerisi=cevap
+        return {"answer": cevap, "sources": unique_sources([top]), "outcome": "qa", "top_score": top_score}
 
-    # 3) Context'i kur: chunk metinlerini aralarına boş satır koyarak birleştir
-    context = "\n\n".join(c["content"] for c in chunks)
-
-    # 4) Mesajları kur: system = role promptu + bağlam, user = soru
+    # 4) Prose yolu: bağlamı kur, role promptuyla LLM'e sor.
+    context = "\n\n".join(c["content"] for c in results)
     system_prompt = SYSTEM_PROMPTS[role] + "\n\nBAĞLAM:\n" + context
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": query},
     ]
-
-    # 5) Modele sor, cevabı döndür
-    return chat(messages) + format_sources(chunks)
+    cevap = chat(messages)
+    return {"answer": cevap, "sources": unique_sources(results), "outcome": "prose", "top_score": top_score}

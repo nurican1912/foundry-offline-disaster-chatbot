@@ -24,4 +24,9 @@ while True:
         break
     if not soru:
         continue
-    print("\n" + answer(soru, role) + "\n")
+    sonuc = answer(soru, role)
+    print(f"\n[{sonuc['outcome']} | skor {sonuc['top_score']:.2f}]")
+    print(sonuc["answer"])
+    if sonuc["sources"]:
+        print("Kaynaklar: " + ", ".join(sonuc["sources"]))
+    print()

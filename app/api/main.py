@@ -8,6 +8,8 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import Literal
 
+from app.config import settings
+from app.data.database import log_query
 from app.rag.pipeline import answer
 
 app = FastAPI(title="Acil Durum RAG Asistanı")
@@ -21,10 +23,26 @@ class AskRequest(BaseModel):
     role: Literal["victim", "rescuer"] = "victim"  # istemci göndermezse varsayılan victim
 
 
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok"}
+
+
 # --- Endpoint ---
 @app.post("/ask")
 def ask(req: AskRequest) -> dict:
-    """Soruyu pipeline'a verir, cevabı JSON olarak döner."""
-    sonuc = answer(req.query, req.role)
-    return {"answer": sonuc}
+    """Soruyu pipeline'a verir, paketi loglar ve yapılandırılmış JSON döner."""
+    sonuc = answer(req.query, req.role)   # paket: {answer, sources, outcome, top_score}
 
+    # 1) Soruyu query_log'a yaz (paketten alanları çekerek)
+    log_query(
+        settings.db_path, req.query, req.role,
+        sonuc["outcome"], sonuc["top_score"], sonuc["answer"],
+    )
+
+    # 2) İstemciye yapılandırılmış JSON döndür (top_score iç bilgi, dışarı vermiyoruz)
+    return {
+        "answer": sonuc["answer"],
+        "sources": sonuc["sources"],
+        "outcome": sonuc["outcome"],
+    }

@@ -7,6 +7,7 @@ embedding sütunu şimdilik NULL kalır; embedding çözülünce (B3) doldurulur
 import hashlib
 import json
 import sqlite3
+from datetime import datetime
 
 
 def init_db(db_path: str) -> None:
@@ -24,6 +25,19 @@ def init_db(db_path: str) -> None:
     content_hash TEXT UNIQUE,
     embedding TEXT
     );""")
+
+    # Soru günlüğü (query_log) — her sorulan soruyu geri besleme/korpus-deliği
+    # analizi için saklar. outcome: 'rejected'|'qa'|'prose'. Sadece yerel, offline.
+    cursor.execute("""CREATE TABLE IF NOT EXISTS query_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT,
+    query TEXT,
+    role TEXT,
+    outcome TEXT,
+    top_score REAL,
+    answer TEXT
+    );""")
+
     conn.commit()   # değişiklikleri kaydet
     conn.close()
 
@@ -89,6 +103,32 @@ def save_embedding(db_path: str, chunk_id: int, vector: list[float]) -> None:
         "UPDATE chunks SET embedding = ? WHERE id = ?",
         (json.dumps(vector), chunk_id)
     )
+
+    conn.commit()
+    conn.close()
+
+
+def log_query(
+    db_path: str,
+    query: str,
+    role: str,
+    outcome: str,
+    top_score: float,
+    answer: str,
+) -> None:
+    """Sorulan bir soruyu query_log tablosuna kaydeder (geri besleme / delik analizi).
+
+    outcome: 'rejected' | 'qa' | 'prose'. top_score: en iyi eşleşmenin skoru.
+    """
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "INSERT INTO query_log (ts, query, role, outcome, top_score, answer) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (datetime.now().isoformat(), query, role, outcome, top_score, answer),
+    )
+
 
     conn.commit()
     conn.close()
