@@ -12,6 +12,18 @@ from app.rag.retrieval import get_relevant_chunks
 # iyi bir sınıflandırıcı gelince geri bağlanacak. Bkz KARSILASTIGIMIZ_ZORLUKLAR Zorluk 6.
 
 
+def format_sources(chunks: list[dict]) -> str:
+    """Kullanılan chunk'ların kaynaklarını tekilleştirip 'Kaynaklar:' bloğu üretir.
+
+    Deterministik (koddan) — model kaynak uydurmaz. Cevabın SONUNA eklenir.
+    """
+    sources = []
+    for c in chunks:
+        if c["source"] not in sources:
+            sources.append(c["source"])
+    return "\n\nKaynaklar: " + ", ".join(sources)
+
+
 
 def answer(query: str, role: str) -> str:
     """Kullanıcının sorusuna, rolüne uygun ve yalnızca korpustan grounded cevap üretir."""
@@ -25,7 +37,8 @@ def answer(query: str, role: str) -> str:
         # Karar 5: en iyi eşleşme Q&A ise, doğrulanmış cevabı LLM'siz döndür (hızlı + kusursuz)
     top = chunks[0]
     if top["type"] == "qa":
-        return top["content"].split("\n", 1)[1].strip()   # ilk satır=soru, gerisi=cevap
+        # ilk satır=soru, gerisi=cevap
+        return top["content"].split("\n", 1)[1].strip() + format_sources([top])
 
     # 3) Context'i kur: chunk metinlerini aralarına boş satır koyarak birleştir
     context = "\n\n".join(c["content"] for c in chunks)
@@ -38,4 +51,4 @@ def answer(query: str, role: str) -> str:
     ]
 
     # 5) Modele sor, cevabı döndür
-    return chat(messages)
+    return chat(messages) + format_sources(chunks)
